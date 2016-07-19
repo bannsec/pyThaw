@@ -43,6 +43,20 @@ def getVersion():
     """
     # TODO: Improve this to use loaded library names, symbols, etc.
     global r2
+
+    # First see if we have a library that looks like a python one
+    libs = json.loads(r2.cmd("ilj"))
+
+    # RE based matching to look for python name
+    for lib in libs:
+        if "python" in lib.lower():
+            try:
+                version = re.search("python([0-9]\.[0-9])",lib.lower()).group(1)
+                return version
+            except:
+                pass
+
+    # Fall back to strings
     return r2.cmd("iz | grep -io \"python[0-9]\.[0-9]\" | sort -ur | head -1| cut -d \"n\" -f 2")
 
 
