@@ -29,7 +29,7 @@ This script works against Python's build-in Freeze function. You can find it und
 For now, it will only thaw linux elf frozen files. Also, it appends a python2.7 header, which means that if the files aren't 2.7, it's very possible they won't decompile correctly. The crux of the file is extracted at that point, however, it just needs the proper header.
 
 On Ubuntu, you need to install the examples package:
- - apt-get innstall python2.7-examples
+ - apt-get install python2.7-examples
 
 ## The List
 The only things I've developed for and tested against.
