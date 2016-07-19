@@ -11,6 +11,7 @@ import glob
 import subprocess
 import binascii
 import struct
+import re
 
 from MagicValues import PYTHONMAGIC
 
@@ -128,6 +129,111 @@ def breakAtPyImport_ImportFrozenModule():
     return
     
 
+def findFrozenModules():
+    """
+    Finds FrozenModules structure in memory
+    Returns: int addr of first entry in _frozen struct list
+    """
+
+    """
+    {'demname': '',
+     'flagname': 'obj.PyImport_FrozenModules',
+     'name': 'PyImport_FrozenModules',
+     'paddr': 4511176,
+     'size': 8,
+     'type': 'OBJECT',
+     'vaddr': 6608328}
+    """
+    global r2
+    global r2_module
+
+    # Because we may need to adjust our location
+    base_addr = 0
+
+    # TODO: Would rather use "dmi" here, but it's not returning the proper address
+
+    #s = json.loads(r2.cmd('isj'))
+    #[x for x in s if x['name'] == "PyImport_FrozenModules"]
+
+    #base_load_addrs = json.loads(r2.cmd('dmmj')) # Find the base address for this modul
+    #r2_module_baseAddr = [x for x in base_load_addrs if r2_module_name in x["file"]][0]['address']
+
+    # Check for frozenModule symbol in main exe
+    s = json.loads(r2.cmd('isj'))
+    frozenPtrAddr = [x for x in s if x['name'] == "PyImport_FrozenModules"]
+    
+    # If we found it, get the address
+    if len(frozenPtrAddr) != 0:
+        # Really should only find one of these...
+        assert len(frozenPtrAddr) == 1
+        frozenPtrAddr = frozenPtrAddr[0]["vaddr"]
+    
+    # Else, maybe it's in the shared library?
+    elif r2_module != None:
+        # Load up the symbols
+        s = json.loads(r2_module.cmd('isj'))
+        frozenPtrAddr = [x for x in s if x['name'] == "PyImport_FrozenModules"]
+        
+        # Did we find it?
+        if len(frozenPtrAddr) != 0:
+            assert len(frozenPtrAddr) == 1
+            frozenPtrAddr = frozenPtrAddr[0]["vaddr"]
+    
+            # We need to find this module's base addr
+            base_load_addrs = json.loads(r2.cmd('dmmj')) # Get a listing of all loaded modules and their base addrs
+            base_addr = [x for x in base_load_addrs if r2_module_name in x["file"]][0]['address']
+
+
+    # If we weren't able to resolve it
+    if type(frozenPtrAddr) is not int:
+        raise Exception("Could not find PyImport_FrozenModules location. Think about submitting an issue on github.")
+    
+    # If we've gotten this far, we have found the frozenPtr.
+    # Dereference the pointer to find the first struct address
+    
+    # Setting block size due to radare2 sometimes being weird about this...
+    r2.cmd("b {0}".format(offset))
+  
+
+    # Oddly enough, pvj gives the correct value while pv does not. :-/
+    # JK... It works sometimes, but completely freezes others...
+    #frozenPtr = json.loads(r2.cmd("pvj @ {0}".format(base_addr + frozenPtrAddr)))["value"]
+
+    if offset == 8:
+        mod = "q"
+    else:
+        mod = "w"
+
+    frozenPtr = r2.cmd("px{1} @ {0}".format(base_addr + frozenPtrAddr,mod))
+    
+    # Using RE to hopefully make it less likely to break...
+    frozenPtr = int(re.search("[0-9a-fx]+ +([0-9a-fx]+)",frozenPtr).group(1),16)
+
+    """
+    # Grab the raw data. Bug right now where pv doesn't necessarily return right size for pointer.
+    frozenPtr = binascii.unhexlify(r2.cmd("pvz @ {0}".format(base_addr + frozenPtrAddr)).replace("\\x","")))
+    
+    # TODO: Handle big-endian binaries
+    if offset == 8:
+        mod = "Q"
+    elif offset == 4:
+        mod = "I"
+    elif offset == 2:
+        mod = "H"
+    else:
+        # What the heck goes here?!
+        raise Exception("Unknown architecture size... Submit an issue")
+    
+    # Convert it
+    frozenPtr = struct.unpack("<{0}".format(mod),frozenPtr)[0]
+    """
+
+
+    # Return our discovered ptr
+    return frozenPtr
+        
+
+
 banner()
 
 # Create our output dirs
@@ -206,7 +312,8 @@ write("[ Done ]\n")
 write("Locating python files in memory ... ")
 
 # Grab the frozen array address
-frozenArray = int(r2.cmd('pv @ obj.PyImport_FrozenModules'),16) # Dereference modules array pointer
+#frozenArray = int(r2.cmd('pv @ obj.PyImport_FrozenModules'),16) # Dereference modules array pointer
+frozenArray = findFrozenModules()
 
 write("[ Done ]\n")
 
