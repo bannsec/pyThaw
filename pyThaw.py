@@ -40,6 +40,7 @@ def getVersion():
     """
     Determine the version of this python exe using strings
     """
+    # TODO: Improve this to use loaded library names, symbols, etc.
     global r2
     return r2.cmd("iz | grep -io \"python[0-9]\.[0-9]\" | sort -ur | head -1| cut -d \"n\" -f 2")
 
@@ -55,16 +56,79 @@ def banner():
 | |     __/ |                         
 |_|    |___/                          
 """)
-    print("<git hub link here>\n")
+    print("https://github.com/Owlz/pyThaw\n")
     print("Extracts your source python files from a frozen python exe.")
     print("Be patient... This may take some time!")
     
 
-banner()
+def _findModuleFullPath(m):
+    """
+    Given module to load m, find it's full path
+    """
+    # Again, hacking this because cmdj is broken right now
+    binOS = r2.cmd("i*~asm.os").split("=")[1]
+    
+    # TODO: Improve this finding functionality
+    if binOS == "linux":
+        # TODO: Check for fail
+        binPath = subprocess.check_output(b'ldconfig -p| grep ' + str.encode(m),shell=True).split(b'=>')[1].strip()
+        return binPath.decode('ascii')
 
-# TODO: This assumes python 2.7
-# Save the code, prepending the correct magic value
-#PYTHONMAGIC = b'\x03\xF3\x0D\x0A\x00\x00\x00\x00'
+    else:
+        return m
+    
+
+
+def loadModule():
+    global r2
+    modules = r2.cmdj("ilj")
+    for module in modules:
+        # If we found a python shared library
+        if "python" in module.lower():
+            modulePath = _findModuleFullPath(module)
+            write("Loading shared library {0} ... ".format(module))
+            # TODO: Better support for finding modules
+            r2_module = r2pipe.open(modulePath,["-AA"])
+            write("[ Done ]\n")
+            return (r2_module, module)
+
+    return (None, None)
+
+
+def breakAtPyImport_ImportFrozenModule():
+    """
+    Break at location of PyImport_ImportFrozenModule taking into account that it might be static in the main exe or in a shared lib
+    """
+    #iE*~PyImport_ImportFrozenModule
+    global r2
+    global r2_module
+    global r2_module_name
+    
+    # Check if it's in the main exe
+    addr = r2.cmd("iE*~PyImport_ImportFrozenModule")
+
+    if addr != "":
+        # Tell r2 to break here
+        r2.cmd("db {0}".format(int(addr.split(" ")[-1],16)))
+        return
+
+    # If it's not in the main, try the module
+    if r2_module != None:
+        addr = r2_module.cmd("iE*~PyImport_ImportFrozenModule")
+
+        if addr != "":
+            # Tell r2 to break at this location
+            addr = int(addr.split(" ")[-1],16)
+            #print("Running command: ","dbm {0} {1}".format(r2_module_name,addr))
+            r2.cmd("dbm {0} {1}".format(r2_module_name,addr))
+            return
+    
+    # Looks like we failed :-(
+    print("Couldn't find PyImport_ImportFrozenModule! If you think this is a legit Frozen python exe, please submit an issue on github")
+    return
+    
+
+banner()
 
 # Create our output dirs
 MODULE_DIR="modules"
@@ -73,8 +137,13 @@ MODULE_SOURCE_DIR="src"
 os.makedirs(MODULE_DIR,exist_ok=True)
 os.makedirs(MODULE_SOURCE_DIR,exist_ok=True)
 
+# Load main executable
 write("Loading And Analyzing File ... ")
 r2 = r2pipe.open(f,["-AA","-d"])
+
+# Load module if this is dynamically linked
+r2_module, r2_module_name = loadModule()
+
 
 """
 # Not doing it this way right now due to bug: https://github.com/radare/radare2/issues/5340
@@ -87,9 +156,8 @@ offset = int(bits/8)
 """
 
 """
-Lookup path for library
-ldconfig -p| grep libpython3.5m.so.1.0
-python -c "import subprocess; x = subprocess.check_output(b'ldconfig -p| grep libpython3.5m.so.1.0',shell=True).split(b'=>')[1].strip();print(x)"
+
+Find symbol from module: dmi libpython3.5m.so.1.0 PyImport_FrozenModules
 """
 
 write("Determining Python Version ... ")
@@ -113,10 +181,22 @@ else:
 
 offset = int(int(r2.cmd('i~bit').split(" ")[-1])/8)
 
-write("Executing to module load ... ")
+write("Executing to main ... ")
 
-# Set our breakpoint
-r2.cmd("db sym.PyImport_ImportFrozenModule")
+# Set initial breakpoint at main
+r2.cmd("db main")
+r2.cmd("dc")
+
+write("[ Done ]\n")
+
+write("Finding PyImport_ImportFrozenModule ... ")
+
+# Find PyImport_ImportFrozenModule as it might be in a loaded module
+breakAtPyImport_ImportFrozenModule()
+
+write("[ Done ]\n")
+
+write("Executing to PyImport_ImportFrozenModule ... ")
 
 # Start it
 r2.cmd("dc")
