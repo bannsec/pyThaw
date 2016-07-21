@@ -12,8 +12,12 @@ import subprocess
 import binascii
 import struct
 import re
+import zipfile
+
 
 from MagicValues import PYTHONMAGIC
+from helpers import *
+import decompile
 
 # Parse out the file we're going to work with
 parser = argparse.ArgumentParser(description='Extract source python files from Frozen python executables.')
@@ -32,9 +36,6 @@ def cmdj(cmd):
     i = o.index("{")
     return json.loads(o[i:])
 
-def write(s):
-    sys.stdout.write(s)
-    sys.stdout.flush()
 
 
 def getVersion():
@@ -166,12 +167,6 @@ def findFrozenModules():
 
     # TODO: Would rather use "dmi" here, but it's not returning the proper address
 
-    #s = json.loads(r2.cmd('isj'))
-    #[x for x in s if x['name'] == "PyImport_FrozenModules"]
-
-    #base_load_addrs = json.loads(r2.cmd('dmmj')) # Find the base address for this modul
-    #r2_module_baseAddr = [x for x in base_load_addrs if r2_module_name in x["file"]][0]['address']
-
     # Check for frozenModule symbol in main exe
     s = json.loads(r2.cmd('isj'))
     frozenPtrAddr = [x for x in s if x['name'] == "PyImport_FrozenModules"]
@@ -223,30 +218,10 @@ def findFrozenModules():
     # Using RE to hopefully make it less likely to break...
     frozenPtr = int(re.search("[0-9a-fx]+ +([0-9a-fx]+)",frozenPtr).group(1),16)
 
-    """
-    # Grab the raw data. Bug right now where pv doesn't necessarily return right size for pointer.
-    frozenPtr = binascii.unhexlify(r2.cmd("pvz @ {0}".format(base_addr + frozenPtrAddr)).replace("\\x","")))
-    
-    # TODO: Handle big-endian binaries
-    if offset == 8:
-        mod = "Q"
-    elif offset == 4:
-        mod = "I"
-    elif offset == 2:
-        mod = "H"
-    else:
-        # What the heck goes here?!
-        raise Exception("Unknown architecture size... Submit an issue")
-    
-    # Convert it
-    frozenPtr = struct.unpack("<{0}".format(mod),frozenPtr)[0]
-    """
-
 
     # Return our discovered ptr
     return frozenPtr
         
-
 
 banner()
 
@@ -256,6 +231,11 @@ MODULE_SOURCE_DIR="src"
 
 os.makedirs(MODULE_DIR,exist_ok=True)
 os.makedirs(MODULE_SOURCE_DIR,exist_ok=True)
+
+
+#################
+# Python Freeze #
+#################
 
 # Load main executable
 write("Loading And Analyzing File ... ")
@@ -326,7 +306,6 @@ write("[ Done ]\n")
 write("Locating python files in memory ... ")
 
 # Grab the frozen array address
-#frozenArray = int(r2.cmd('pv @ obj.PyImport_FrozenModules'),16) # Dereference modules array pointer
 frozenArray = findFrozenModules()
 
 write("[ Done ]\n")
@@ -367,24 +346,7 @@ while True:
     frozenArray += offset*3
 
 
-#####################################
-# Reverse From pyc to python source #
-#####################################
-
-for m in glob.glob("{0}/*".format(MODULE_DIR)):
-    try:
-        mName = m.split("/")[-1]
-        write("Reversing Source of {0} ... ".format(mName))
-        subprocess.check_output("uncompyle6 -o {1} {0} 2>&1".format(m,MODULE_SOURCE_DIR),shell=True)
-        write("[ Done ]\n")
-    except Exception as e:
-        write("[ Fail ]\n")
-
-
-
-
-
-
+decompile.decompile(MODULE_DIR,MODULE_SOURCE_DIR)
 
 
 
